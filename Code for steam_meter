@@ -1,0 +1,234 @@
+//======================WiFi Settings==============================
+#include <Wire.h>
+#include <ESP8266WiFi.h>
+#include "Adafruit_MQTT.h"
+#include "Adafruit_MQTT_Client.h"
+
+#define WLAN_SSID   "MASIoT Portal"
+#define WLAN_PASS   "masiot123"
+
+//milliseconds to sleep
+const int intervall = 300000;
+//time out loop count
+const int timeout = 200;
+
+volatile int pulses = 0;
+volatile uint32_t meterage = 0;
+
+
+//======================MQTT broker settings=============================
+
+#define HOST        "192.168.8.105"
+#define PORT        1883
+#define USERNAME    "admin"
+#define PASSWORD    "masiot"
+
+//==================Published Streams================================
+WiFiClient client;
+Adafruit_MQTT_Client mqtt(&client, HOST, PORT, USERNAME, PASSWORD);
+
+
+Adafruit_MQTT_Publish Ua = Adafruit_MQTT_Publish(&mqtt, "iotStation/Ua1");
+Adafruit_MQTT_Publish Ub = Adafruit_MQTT_Publish(&mqtt, "iotStation/Ub1");
+Adafruit_MQTT_Publish Uc = Adafruit_MQTT_Publish(&mqtt, "iotStation/Uc1");
+
+Adafruit_MQTT_Publish Uab = Adafruit_MQTT_Publish(&mqtt, "iotStation/Uab1");
+Adafruit_MQTT_Publish Ubc = Adafruit_MQTT_Publish(&mqtt, "iotStation/Ubc1");
+Adafruit_MQTT_Publish Uca = Adafruit_MQTT_Publish(&mqtt, "iotStation/Uca1");
+
+Adafruit_MQTT_Publish Ia = Adafruit_MQTT_Publish(&mqtt, "iotStation/Ia1");
+Adafruit_MQTT_Publish Ib = Adafruit_MQTT_Publish(&mqtt, "iotStation/Ib1");
+Adafruit_MQTT_Publish Ic = Adafruit_MQTT_Publish(&mqtt, "iotStation/Ic1");
+
+Adafruit_MQTT_Publish Pa = Adafruit_MQTT_Publish(&mqtt, "iotStation/Pa1");
+Adafruit_MQTT_Publish Pb = Adafruit_MQTT_Publish(&mqtt, "iotStation/Pb1");
+Adafruit_MQTT_Publish Pc = Adafruit_MQTT_Publish(&mqtt, "iotStation/Pc1");
+Adafruit_MQTT_Publish Ps = Adafruit_MQTT_Publish(&mqtt, "iotStation/Ps1");
+
+Adafruit_MQTT_Publish Qa = Adafruit_MQTT_Publish(&mqtt, "iotStation/Qa1");
+Adafruit_MQTT_Publish Qb = Adafruit_MQTT_Publish(&mqtt, "iotStation/Qb1");
+Adafruit_MQTT_Publish Qc = Adafruit_MQTT_Publish(&mqtt, "iotStation/Qc1");
+Adafruit_MQTT_Publish Qs = Adafruit_MQTT_Publish(&mqtt, "iotStation/Qs1");
+
+
+Adafruit_MQTT_Publish PFa = Adafruit_MQTT_Publish(&mqtt, "iotStation/PFa1");
+Adafruit_MQTT_Publish PFb = Adafruit_MQTT_Publish(&mqtt, "iotStation/PFb1");
+Adafruit_MQTT_Publish PFc = Adafruit_MQTT_Publish(&mqtt, "iotStation/PFc1");
+Adafruit_MQTT_Publish PFs = Adafruit_MQTT_Publish(&mqtt, "iotStation/PFs1");
+
+Adafruit_MQTT_Publish Meters = Adafruit_MQTT_Publish(&mqtt, "iotStation/Meterage1");
+
+Adafruit_MQTT_Publish WPP = Adafruit_MQTT_Publish(&mqtt, "iotStation/WPP1");
+
+void MQTT_connect();
+
+//===================MODBUS Variables=============================
+#include <ModbusMaster.h>
+
+unsigned int radixVI = 0;
+unsigned int radixPS = 0;
+uint8_t voltageRadix = 0;
+uint8_t currentRadix = 0;
+uint8_t powerRadix = 0;
+uint8_t sign = 0;
+
+// instantiate ModbusMaster object
+ModbusMaster node2; //multimeter as slave 2
+
+void preTransmission()
+{
+
+}
+
+void postTransmission()
+{
+
+}
+
+void setup() {
+  //==================Establish WiFi Connection==================
+  WiFi_connect();//connect to WiFi
+  MQTT_connect(); //connect to MQTT Broker
+
+
+  //====================Setup Modbus Baud Rate================
+  // Modbus communication runs at 9600 baud
+  Serial.begin(9600);
+
+  node2.begin(2, Serial);
+
+  node2.preTransmission(preTransmission);
+  node2.postTransmission(postTransmission);
+
+  attachInterrupt(D6, MeterageReading, FALLING);
+
+
+}
+
+bool state = true;
+bool which = 0;
+
+void loop() {
+
+  if (WiFi.status() != WL_CONNECTED) {
+    WiFi_connect();
+  }
+  MQTT_connect();
+  readSETMultimeter();
+  Meters.publish(meterage);
+
+}
+
+void MeterageReading() {
+  pulses++;
+  if (pulses == 3) {
+    meterage++;
+  }
+}
+
+
+void WiFi_connect() {
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(WLAN_SSID, WLAN_PASS);
+  int i = 0;
+  for (; i < timeout; i++)
+  {
+    if (WiFi.status() == WL_CONNECTED) break;
+    //delay(100);
+    //Serial.print(".");
+  }
+  if (i == timeout) {
+    return;
+  }
+}
+
+
+
+void MQTT_connect() {
+  int8_t ret;
+  if (mqtt.connected()) {
+    return;
+  }
+
+  //Serial.print("Connecting to MQTT... ");
+  uint8_t retries = 10;
+  while ((ret = mqtt.connect()) != 0) { // connect will return 0 for connected
+    //Serial.println(mqtt.connectErrorString(ret));
+    //Serial.println("Retrying MQTT connection in 1 second...");
+    mqtt.disconnect();
+    delay(1000);
+    retries--;
+    if (retries == 0) {
+      //deepSleep();
+    }
+  }
+  //Serial.println("MQTT Connected!");
+}
+
+
+
+void readSETMultimeter() {
+  boolean flag = 0;
+  uint8_t result;
+
+  // Read 2 registers starting at 0x0000)
+  result = node2.readHoldingRegisters(0x0023, 23); //read 23 registers from 0x0023
+  if (result == node2.ku8MBSuccess)
+  {
+    radixVI = node2.getResponseBuffer(0);
+    currentRadix = radixVI & 0xff;
+    voltageRadix = (radixVI >> 8);
+    radixPS = node2.getResponseBuffer(1);
+    sign = radixPS & 0xff;
+    powerRadix = (radixPS >> 8);
+
+    Ua.publish((node2.getResponseBuffer(2) / 10000.00f) * pow(10, voltageRadix));
+    Ub.publish((node2.getResponseBuffer(3) / 10000.00f) * pow(10, voltageRadix));
+    Uc.publish((node2.getResponseBuffer(4) / 10000.00f) * pow(10, voltageRadix));
+    Uab.publish((node2.getResponseBuffer(5) / 10000.00f) * pow(10, voltageRadix));
+    Ubc.publish((node2.getResponseBuffer(6) / 10000.00f) * pow(10, voltageRadix));
+    Uca.publish((node2.getResponseBuffer(7) / 10000.00f) * pow(10, voltageRadix));
+
+    Ia.publish((node2.getResponseBuffer(8) / 10000.00f) * pow(10, currentRadix));
+    Ib.publish((node2.getResponseBuffer(9) / 10000.00f) *  pow(10, currentRadix));
+    Ic.publish((node2.getResponseBuffer(10) / 10000.00f) *  pow(10, currentRadix));
+
+    Pa.publish((node2.getResponseBuffer(11) / 10000.00f) *  pow(10, powerRadix));
+    Pb.publish((node2.getResponseBuffer(12) / 10000.00f) * pow(10, powerRadix));
+    Pc.publish((node2.getResponseBuffer(13) / 10000.00f) * pow(10, powerRadix));
+    Ps.publish((node2.getResponseBuffer(14) / 10000.00f) * pow(10, powerRadix));
+    Qa.publish((node2.getResponseBuffer(15) / 10000.00f) * pow(10, powerRadix));
+    Qb.publish((node2.getResponseBuffer(16) / 10000.00f) * pow(10, powerRadix));
+    Qc.publish((node2.getResponseBuffer(17) / 10000.00f) * pow(10, powerRadix));
+    Qs.publish((node2.getResponseBuffer(18) / 10000.00f) * pow(10, powerRadix));
+
+    PFa.publish((node2.getResponseBuffer(19) / 1000.00f));
+    PFb.publish((node2.getResponseBuffer(20) / 1000.00f));
+    PFc.publish((node2.getResponseBuffer(21) / 1000.00f));
+    PFs.publish((node2.getResponseBuffer(22) / 1000.00f));
+
+  } else {
+    flag = 1;
+  }
+  node2.clearResponseBuffer();
+
+  result = node2.readHoldingRegisters(0x0047, 2); //read 2 registers from 0x003F
+  if (result == node2.ku8MBSuccess)
+  {
+
+    unsigned long high = node2.getResponseBuffer(0);
+    unsigned long low = node2.getResponseBuffer(1);
+    long int num = ((high << 16) | low);
+    float wppval = *(float*)&num/1000.00f;
+
+    WPP.publish(wppval);
+
+
+  }
+  node2.clearResponseBuffer();
+
+
+}
+
+
+                
