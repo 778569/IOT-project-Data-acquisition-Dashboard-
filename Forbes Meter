@@ -1,0 +1,182 @@
+//======================WiFi Settings==============================
+#include <Wire.h>
+#include <ESP8266WiFi.h>
+#include "Adafruit_MQTT.h"
+#include "Adafruit_MQTT_Client.h"
+
+#define WLAN_SSID   "MASIoT Portal"
+#define WLAN_PASS   "masiot123"
+
+//milliseconds to sleep
+const int intervall = 300000;
+//time out loop count
+const int timeout = 200;
+
+//======================MQTT broker settings=============================
+
+#define HOST        "192.168.8.105"
+#define PORT        1883
+#define USERNAME    "admin"
+#define PASSWORD    "masiot"
+
+//==================Published Streams================================
+WiFiClient client;
+Adafruit_MQTT_Client mqtt(&client, HOST, PORT, USERNAME, PASSWORD);
+Adafruit_MQTT_Publish flowrate1 = Adafruit_MQTT_Publish(&mqtt, "iotStation/flowrate1");
+Adafruit_MQTT_Publish totaliser1 = Adafruit_MQTT_Publish(&mqtt, "iotStation/totaliser1");
+Adafruit_MQTT_Publish flowrate2 = Adafruit_MQTT_Publish(&mqtt, "iotStation/flowrate2");
+Adafruit_MQTT_Publish totaliser2 = Adafruit_MQTT_Publish(&mqtt, "iotStation/totaliser2");
+
+
+void MQTT_connect();
+
+//===================MODBUS Variables=============================
+#include <ModbusMaster.h>
+
+int Val1, Val2, Val3 = 0;
+int TotalisedCounter = 0;
+
+
+// instantiate ModbusMaster object
+ModbusMaster node1; //flowrate sensor1 as slave 1
+ModbusMaster node2;//flowrate sensor2 as slave 2
+
+void preTransmission()
+{
+
+}
+
+void postTransmission()
+{
+
+}
+
+void setup() {
+  //==================Establish WiFi Connection==================
+  WiFi_connect();//connect to WiFi
+  MQTT_connect(); //connect to MQTT Broker
+
+
+  //====================Setup Modbus Baud Rate================
+  // Modbus communication runs at 9600 baud
+  Serial.begin(9600);
+
+  //Setting up Slaves
+  node1.begin(3, Serial);
+  node2.begin(2, Serial);
+
+  node1.preTransmission(preTransmission);
+  node1.postTransmission(postTransmission);
+
+  node2.preTransmission(preTransmission);
+  node2.postTransmission(postTransmission);
+
+
+}
+
+bool state = true;
+bool which = 0;
+
+
+void loop() {
+  if (WiFi.status() != WL_CONNECTED){ 
+    WiFi_connect();
+  }
+  MQTT_connect();
+  readForbesFIT();
+  //readSETMultimeter();
+
+
+}
+
+
+void WiFi_connect(){
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(WLAN_SSID, WLAN_PASS);
+  int i = 0;
+  for (; i < timeout; i++)
+  {
+    if (WiFi.status() == WL_CONNECTED) break;
+    //delay(100);
+    //Serial.print(".");
+  }
+  if (i == timeout) {
+    return;
+  }
+}
+
+
+void MQTT_connect() {
+  int8_t ret;
+  if (mqtt.connected()) {
+    return;
+  }
+
+  //Serial.print("Connecting to MQTT... ");
+  uint8_t retries = 10;
+  while ((ret = mqtt.connect()) != 0) { // connect will return 0 for connected
+    //Serial.println(mqtt.connectErrorString(ret));
+    //Serial.println("Retrying MQTT connection in 1 second...");
+    mqtt.disconnect();
+    delay(1000);
+    retries--;
+    if (retries == 0) {
+      //deepSleep();
+    }
+  }
+  //Serial.println("MQTT Connected!");
+}
+
+
+void readForbesFIT() {
+  boolean flag = 0;
+  uint8_t result;
+
+  if (which == 0) {
+
+    // Read 4 registers starting at 0x0000)
+    result = node1.readHoldingRegisters(0x0000, 4);
+    if (result == node1.ku8MBSuccess)
+    {
+      flowrate1.publish(node1.getResponseBuffer(0));
+
+      Val1 = node1.getResponseBuffer(1) * 1000000;
+      Val2 = node1.getResponseBuffer(2) * 65536;
+      Val3 = node1.getResponseBuffer(3);
+      TotalisedCounter = Val1 + Val2 + Val3;
+      totaliser1.publish(TotalisedCounter);
+
+    } else {
+      //Serial.println("No connection");
+      flag = 1;
+    }
+    node1.clearResponseBuffer();
+
+    delay(500);
+    which = 1;
+  }
+
+  else if (which == 1) {
+
+    result = node2.readHoldingRegisters(0x0000, 4);
+    if (result == node2.ku8MBSuccess)
+    {
+      flowrate2.publish(node2.getResponseBuffer(0));
+
+      Val1 = node2.getResponseBuffer(1) * 1000000;
+      Val2 = node2.getResponseBuffer(2) * 65536;
+      Val3 = node2.getResponseBuffer(3);
+      TotalisedCounter = Val1 + Val2 + Val3;
+      totaliser2.publish(TotalisedCounter);
+
+    } else {
+      //Serial.println("No connection");
+      flag = 1;
+    }
+    node2.clearResponseBuffer();
+    delay(500);
+    which = 0;
+  }
+}
+
+
